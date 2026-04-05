@@ -10,6 +10,7 @@ Renders: 16:9 main video + 9:16 Reel version
 import os, json, tempfile, subprocess, glob, traceback
 import requests
 from flask import Flask, request, jsonify
+from gtts import gTTS
 
 app = Flask(__name__)
 
@@ -32,6 +33,7 @@ def build_video():
     run_id         = data.get("run_id", "test")
     title          = data.get("title", "")[:55]
     voiceover_url  = data.get("voiceover_url", "")
+    voiceover_text = data.get("voiceover_text", title)  # fallback text for gTTS
     music_url      = data.get("music_url", "")
     clip_urls      = data.get("clip_urls", [])[:6]
     duration       = int(data.get("duration", 60))
@@ -96,9 +98,11 @@ def build_video():
             shell=True
         )
 
-        # ── Step 5: Download voiceover ────────────────────────
+        # ── Step 5: Download voiceover (gTTS fallback if URL fails) ──
         voice_path = os.path.join(tmpdir, "voice.mp3")
         voice_ok = False
+
+        # Try the provided URL first (StreamElements or any other TTS URL)
         if voiceover_url:
             try:
                 r = requests.get(voiceover_url, timeout=20)
@@ -106,9 +110,31 @@ def build_video():
                     with open(voice_path, "wb") as f:
                         f.write(r.content)
                     voice_ok = os.path.getsize(voice_path) > 500
-            except:
-                pass
+                    if voice_ok:
+                        print("[FORGE] Voiceover downloaded from URL.")
+                    else:
+                        print("[FORGE] Voiceover URL returned empty file, trying gTTS...")
+                else:
+                    print(f"[FORGE] Voiceover URL returned {r.status_code}, trying gTTS...")
+            except Exception as e:
+                print(f"[FORGE] Voiceover URL failed ({e}), trying gTTS...")
+
+        # Fallback: generate TTS locally with gTTS (Google, completely free)
         if not voice_ok:
+            try:
+                tts_text = (voiceover_text or title)[:2500]
+                print(f"[FORGE] Generating TTS with gTTS ({len(tts_text)} chars)...")
+                tts = gTTS(text=tts_text, lang="en", slow=False)
+                tts.save(voice_path)
+                voice_ok = os.path.exists(voice_path) and os.path.getsize(voice_path) > 500
+                if voice_ok:
+                    print("[FORGE] gTTS voiceover generated successfully.")
+            except Exception as e:
+                print(f"[FORGE] gTTS failed: {e}")
+
+        # Last resort: silent audio
+        if not voice_ok:
+            print("[FORGE] All TTS methods failed, using silent audio.")
             subprocess.run(
                 f'ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=mono -t {duration} "{voice_path}" 2>/dev/null',
                 shell=True

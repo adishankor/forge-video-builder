@@ -16,7 +16,7 @@ log = logging.getLogger("forge")
 app = Flask(__name__)
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
-FORGE_API_KEY = os.environ.get("FORGE_API_KEY", "forge-secret-key-change-me")
+FORGE_API_KEY = os.environ.get("FORGE_API_KEY", "my_forge_secret_2024")
 
 def require_api_key(f):
     @wraps(f)

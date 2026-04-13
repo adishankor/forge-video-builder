@@ -1,0 +1,21 @@
+# render.yaml — Render.com service configuration
+# Place this file in the ROOT of your GitHub repository
+
+services:
+  - type: web
+    name: forge-video-builder
+    env: docker                      # Uses your Dockerfile (required for ffmpeg)
+    plan: free
+    healthCheckPath: /health         # Render checks this to know service is ready
+    dockerfilePath: ./Dockerfile     # Path to your Dockerfile in the repo
+
+    # Environment variables — these must ALREADY be set in your Render dashboard.
+    # render.yaml declares them but does NOT set their values.
+    # Go to Render Dashboard → your service → Environment → add these keys.
+    envVars:
+      - key: FORGE_SECRET
+        sync: false                  # sync:false = Render will NOT auto-generate this value
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_UPLOAD_PRESET
+        sync: false

@@ -1,5 +1,5 @@
 """
-FORGE — Video Builder Service  v3.0  (Memory-Optimized)
+FORGE — Video Builder Service  v3.1  (Memory-Optimized + Pixabay audio fix)
 Runs on Render.com Free tier (512MB RAM limit)
 
 KEY CHANGES from v2:
@@ -161,11 +161,29 @@ def assemble_video(payload: dict, workdir: str) -> str:
             vo_path = ""
 
     # ── Step 3: Background music ───────────────────────────────────────────
+    # Pixabay returns VIDEO files (.mp4 with video+audio OR video-only).
+    # We must extract audio from it first — we cannot use [1:a] on a video file
+    # that has no audio stream, which crashes ffmpeg with "matches no streams".
     music_path = ""
     if music_url:
-        music_path = os.path.join(workdir, "music.mp4")
-        if not download_file(music_url, music_path, timeout=60):
-            music_path = ""
+        raw_music = os.path.join(workdir, "music_raw.mp4")
+        if download_file(music_url, raw_music, timeout=60):
+            # Try extracting audio stream from whatever Pixabay sent
+            music_path = os.path.join(workdir, "music.aac")
+            result = run_ffmpeg(
+                "-i", raw_music,
+                "-vn",                    # drop video stream
+                "-acodec", "aac",
+                "-b:a", "96k",
+                "-t", str(duration + 10), # a bit longer than needed
+                music_path,
+                check=False               # don't crash if no audio stream
+            )
+            if result.returncode != 0 or not os.path.exists(music_path) or os.path.getsize(music_path) < 500:
+                log.warning("Music file had no audio stream — skipping background music")
+                music_path = ""
+            else:
+                log.info(f"Music audio extracted: {os.path.getsize(music_path)//1024}KB")
 
     # ── Step 4: Build concat list (repeat clips to fill duration) ─────────
     concat_txt = os.path.join(workdir, "concat.txt")
@@ -201,9 +219,12 @@ def assemble_video(payload: dict, workdir: str) -> str:
     )
 
     # Build ffmpeg command based on what audio we have
+    # music_path is now always a clean .aac file (audio only) if it exists
+    # vo_path is always an .mp3 file if it exists
     cmd_inputs = ["-f", "concat", "-safe", "0", "-i", concat_txt]
 
     if music_path and vo_path:
+        # Input #0 = video concat, Input #1 = music aac, Input #2 = voiceover mp3
         cmd_inputs += ["-stream_loop", "-1", "-i", music_path, "-i", vo_path]
         audio_filter = (
             f"[1:a]volume=0.12,atrim=0:{duration},asetpts=PTS-STARTPTS[music];"
@@ -222,6 +243,7 @@ def assemble_video(payload: dict, workdir: str) -> str:
             final_out
         )
     elif vo_path:
+        # Input #0 = video concat, Input #1 = voiceover mp3
         cmd_inputs += ["-i", vo_path]
         run_ffmpeg(
             *cmd_inputs,
@@ -234,6 +256,7 @@ def assemble_video(payload: dict, workdir: str) -> str:
             final_out
         )
     elif music_path:
+        # Input #0 = video concat, Input #1 = music aac
         cmd_inputs += ["-stream_loop", "-1", "-i", music_path]
         run_ffmpeg(
             *cmd_inputs,
@@ -246,7 +269,7 @@ def assemble_video(payload: dict, workdir: str) -> str:
             final_out
         )
     else:
-        # No audio — video only
+        # No audio at all — video only
         run_ffmpeg(
             *cmd_inputs,
             "-t", str(duration),
@@ -266,7 +289,7 @@ def assemble_video(payload: dict, workdir: str) -> str:
 @app.route("/health", methods=["GET"])
 @app.route("/ping", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "FORGE v3.0", "memory_optimized": True})
+    return jsonify({"status": "ok", "service": "FORGE v3.1", "memory_optimized": True})
 
 
 @app.route("/build", methods=["POST"])
